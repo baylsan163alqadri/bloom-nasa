@@ -1,58 +1,76 @@
+
 /**
- * BLOOM — NASA/GEE scientific data export, Jericho, 2005–2024.
- * REQUIRED: Draw two REAL polygons in the Earth Engine Code Editor,
- * and name imports exactly areaA and areaB. Do not invent geometries.
- * The polygon shapes MUST be reviewed for land-use homogeneity.
- * Export CSV files to Google Drive, then add them to data/.
+ * BLOOM — NASA Earth Engine exports for Jericho, 2005–2024.
+ * IMPORTANT: Keep the existing imported `areaA` MultiPolygon (2 polygons).
+ * Polygon 0 (right/east on map) = area_a; polygon 1 (left/west) = area_b.
+ * Confirm this order visually before exporting.
  */
 
-// Imports: areaA (Geometry Polygon), areaB (Geometry Polygon).
-// No placeholder polygons are included intentionally.
+// 1. Separate the two *real, drawn* polygons in imported areaA.
+var polygons = ee.List(areaA.coordinates());
+var studyA = ee.Geometry.Polygon(polygons.get(0));
+var studyB = ee.Geometry.Polygon(polygons.get(1));
+
+// 2. Stable IDs shared by map, CSV files, and statistical analysis.
 var areas = ee.FeatureCollection([
-  ee.Feature(areaA, {area_id: 'area_a', description: 'Agricultural study area'}),
-  ee.Feature(areaB, {area_id: 'area_b', description: 'Comparison study area'})
+  ee.Feature(studyA, {
+    area_id: 'area_a',
+    description: 'Agricultural study area'
+  }),
+  ee.Feature(studyB, {
+    area_id: 'area_b',
+    description: 'Mixed agricultural comparison area'
+  })
 ]);
+
 var years = ee.List.sequence(2005, 2024);
 var modisScale = 250;
 var gpmScale = 11132;
 
-Map.centerObject(areas, 11);
-Map.addLayer(areas, {color: 'yellow'}, 'BLOOM study areas');
-print('Study polygons (verify boundaries)', areas);
+Map.centerObject(areas, 12);
+Map.addLayer(studyA, {color: '00FF00'}, 'Area A (green)');
+Map.addLayer(studyB, {color: '0000FF'}, 'Area B (blue)');
+print('Polygon count (must be 2):', polygons.size());
+print('Study areas:', areas);
 
-// MOD13Q1 V6.1: NDVI integer stored with scale factor 0.0001.
-// SummaryQA=0 corresponds to 'Good data'.
+// 3. NASA MODIS NDVI, 16-day observations, 250 m.
+// Only use SummaryQA == 0 (high-quality pixels).
 var modis = ee.ImageCollection('MODIS/061/MOD13Q1')
   .filterDate('2005-01-01', '2025-01-01')
+  .filterBounds(areas.geometry())
   .select(['NDVI', 'SummaryQA']);
 
-// IMERG Monthly V07 precipitation is an average rate in mm/hour.
+// 4. NASA GPM IMERG Monthly V07: monthly mean rate in mm/hour.
 var gpm = ee.ImageCollection('NASA/GPM_L3/IMERG_MONTHLY_V07')
   .filterDate('2005-01-01', '2025-01-01')
+  .filterBounds(areas.geometry())
   .select('precipitation');
 
 function ndviYearArea(year, feature) {
   year = ee.Number(year);
   feature = ee.Feature(feature);
-  var roi = feature.geometry();
   var start = ee.Date.fromYMD(year, 1, 1);
   var end = start.advance(1, 'year');
   var subset = modis.filterDate(start, end);
-  // Each acceptable composite contributes one spatial mean.
-  // Annual NDVI is the arithmetic mean of valid composite means.
-  var measurements = ee.FeatureCollection(subset.toList(subset.size()).map(function(item) {
-    var image = ee.Image(item);
-    var mask = image.select('SummaryQA').eq(0);
-    var value = image.select('NDVI').updateMask(mask).multiply(0.0001)
-      .reduceRegion({
-        reducer: ee.Reducer.mean(),
-        geometry: roi,
-        scale: modisScale,
-        maxPixels: 1e8,
-        tileScale: 4
-      }).get('NDVI');
-    return ee.Feature(null, {ndvi: value});
-  })).filter(ee.Filter.notNull(['ndvi']));
+
+  var measurements = ee.FeatureCollection(
+    subset.toList(subset.size()).map(function(item) {
+      var image = ee.Image(item);
+      var good = image.select('SummaryQA').eq(0);
+      var mean = image.select('NDVI')
+        .multiply(0.0001)
+        .updateMask(good)
+        .reduceRegion({
+          reducer: ee.Reducer.mean(),
+          geometry: feature.geometry(),
+          scale: modisScale,
+          maxPixels: 1e8,
+          tileScale: 4
+        }).get('NDVI');
+      return ee.Feature(null, {ndvi: mean});
+    })
+  ).filter(ee.Filter.notNull(['ndvi']));
+
   var count = measurements.size();
   return ee.Feature(null, {
     year: year,
@@ -65,60 +83,70 @@ function ndviYearArea(year, feature) {
 function rainYearArea(year, feature) {
   year = ee.Number(year);
   feature = ee.Feature(feature);
-  var roi = feature.geometry();
-  var start = ee.Date.fromYMD(year, 1, 1);
   var months = ee.List.sequence(1, 12);
+
   var monthly = ee.FeatureCollection(months.map(function(month) {
     var first = ee.Date.fromYMD(year, month, 1);
     var next = first.advance(1, 'month');
-    var collection = gpm.filterDate(first, next);
-    // IMERG normally has exactly one image per month. Check completeness.
-    var n = collection.size();
-    var rate = ee.Image(ee.Algorithms.If(
-      n.eq(1), collection.first(), ee.Image.constant(0).rename('precipitation')
-    )).select('precipitation');
+    var images = gpm.filterDate(first, next);
+    var imageCount = images.size();
+
+    // The zero image is ONLY an internal computation fallback.
+    // The month's output is NULL unless there is exactly one image.
+    var precipitationRate = ee.Image(ee.Algorithms.If(
+      imageCount.eq(1),
+      images.first(),
+      ee.Image.constant(0).rename('precipitation')
+    ));
+
     var hours = next.difference(first, 'hour');
-    var total = rate.multiply(hours).rename('rainfall_mm')
+    var mm = precipitationRate.select('precipitation')
+      .multiply(hours)
+      .rename('rainfall_mm')
       .reduceRegion({
         reducer: ee.Reducer.mean(),
-        geometry: roi,
+        geometry: feature.geometry(),
         scale: gpmScale,
         maxPixels: 1e8,
         tileScale: 4
       }).get('rainfall_mm');
+
     return ee.Feature(null, {
-      rainfall_mm: ee.Algorithms.If(n.eq(1), total, null),
-      valid_month: n.eq(1)
+      rainfall_mm: ee.Algorithms.If(imageCount.eq(1), mm, null)
     });
   }));
-  var good = monthly.filter(ee.Filter.notNull(['rainfall_mm']))
-                    .filter(ee.Filter.eq('valid_month', true));
-  var count = good.size();
+
+  var valid = monthly.filter(ee.Filter.notNull(['rainfall_mm']));
+  var validMonths = valid.size();
   return ee.Feature(null, {
     year: year,
     area_id: feature.get('area_id'),
-    // Never export a partial-year total as a full annual rainfall value.
-    rainfall_mm: ee.Algorithms.If(count.eq(12), good.aggregate_sum('rainfall_mm'), null),
-    valid_months: count
+    rainfall_mm: ee.Algorithms.If(
+      validMonths.eq(12), valid.aggregate_sum('rainfall_mm'), null
+    ),
+    valid_months: validMonths
   });
 }
 
+// 5. Annual time series for each of the two study areas.
 var areaList = areas.toList(areas.size());
-var ndviTable = ee.FeatureCollection(years.map(function(y) {
-  return ee.FeatureCollection(areaList.map(function(a) {
-    return ndviYearArea(y, ee.Feature(a));
-  }));
-})).flatten();
-var rainTable = ee.FeatureCollection(years.map(function(y) {
-  return ee.FeatureCollection(areaList.map(function(a) {
-    return rainYearArea(y, ee.Feature(a));
+var ndviTable = ee.FeatureCollection(years.map(function(year) {
+  return ee.FeatureCollection(areaList.map(function(area) {
+    return ndviYearArea(year, ee.Feature(area));
   }));
 })).flatten();
 
-print('NDVI preview', ndviTable.limit(5));
-print('Rainfall preview', rainTable.limit(5));
-print('WARNING: NULL values are missing data, not zero. Check valid_months == 12.');
+var rainfallTable = ee.FeatureCollection(years.map(function(year) {
+  return ee.FeatureCollection(areaList.map(function(area) {
+    return rainYearArea(year, ee.Feature(area));
+  }));
+})).flatten();
 
+print('NDVI preview (check numbers):', ndviTable.limit(5));
+print('Rainfall preview (check numbers):', rainfallTable.limit(5));
+print('Missing values remain NULL, not zero. Annual rain requires 12 valid months.');
+
+// 6. Start all three exports manually in the Tasks panel.
 Export.table.toDrive({
   collection: ndviTable,
   description: 'BLOOM_ndvi_annual',
@@ -126,13 +154,15 @@ Export.table.toDrive({
   fileFormat: 'CSV',
   selectors: ['year', 'area_id', 'ndvi', 'valid_observations']
 });
+
 Export.table.toDrive({
-  collection: rainTable,
+  collection: rainfallTable,
   description: 'BLOOM_rainfall_annual',
   fileNamePrefix: 'rainfall_annual',
   fileFormat: 'CSV',
   selectors: ['year', 'area_id', 'rainfall_mm', 'valid_months']
 });
+
 Export.table.toDrive({
   collection: areas,
   description: 'BLOOM_study_areas',
