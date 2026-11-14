@@ -79,7 +79,7 @@ def render(ctx, navigate):
         context_map = folium.Map(
             location=[31.86, 35.46],
             zoom_start=10,
-            tiles="CartoDB positron",
+            tiles="OpenStreetMap",
             control_scale=True
         )
 
