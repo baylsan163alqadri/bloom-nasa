@@ -1,4 +1,4 @@
-# BLOOM 🌱
+# BLOOM 
 **Beyond the Green — Jericho, Palestine**
 
 NASA Space Apps Challenge 2026 — Be An Earth System Trend Detective!
