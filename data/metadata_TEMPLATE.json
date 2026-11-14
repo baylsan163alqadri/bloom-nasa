@@ -1,0 +1,41 @@
+{
+  "project": "BLOOM — Beyond the Green",
+  "verification_status": "pending",
+  "study_location": "Jericho, Palestine",
+  "study_years": [2005, 2024],
+  "study_areas": {
+    "area_a": "DESCRIBE ACTUAL POLYGON, land-use evidence, location and area",
+    "area_b": "DESCRIBE ACTUAL POLYGON, land-use evidence, location and area"
+  },
+  "datasets": {
+    "vegetation": {
+      "name": "MODIS MOD13Q1 V6.1",
+      "earth_engine_id": "MODIS/061/MOD13Q1",
+      "band": "NDVI",
+      "quality_mask": "SummaryQA == 0",
+      "scale_factor": 0.0001,
+      "spatial_resolution_m": 250,
+      "temporal_resolution": "16-day",
+      "aggregation": "Average of valid spatial composite means in each calendar year",
+      "annual_unit": "unitless"
+    },
+    "precipitation": {
+      "name": "NASA GPM IMERG Monthly V07",
+      "earth_engine_id": "NASA/GPM_L3/IMERG_MONTHLY_V07",
+      "band": "precipitation",
+      "native_unit": "mm/hour",
+      "spatial_resolution_approx_km": 11.1,
+      "aggregation": "monthly precipitation rate * actual calendar month hours; sum 12 months",
+      "annual_unit": "mm/year",
+      "incomplete_year_policy": "null, never zero"
+    }
+  },
+  "export_date_utc": "FILL_AFTER_EXPORT",
+  "earth_engine_script": "scripts/export_nasa_data.js",
+  "validation": "FILL: who validated; observed values; result; date",
+  "limitations": [
+    "GPM pixels are much coarser than MODIS pixels and selected polygon dimensions",
+    "NDVI does not by itself establish irrigation causality",
+    "Satellite retrieval uncertainty and mixed pixels remain possible"
+  ]
+}
