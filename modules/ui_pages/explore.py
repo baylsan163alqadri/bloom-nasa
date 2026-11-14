@@ -63,33 +63,14 @@ def render(ctx, navigate):
         "the verified polygons are supplied."
     )
 
-    if ctx.geojson.get("features"):
         render_map(
-            ctx.geojson,
-            ctx.area_id
-        )
-
-    else:
-        st.info(
-            "Study-area polygons are not yet available. "
-            "The map below gives general geographic context, "
-            "not a research boundary."
-        )
-
-        context_map = folium.Map(
-            location=[31.86, 35.46],
-            zoom_start=10,
-            tiles="OpenStreetMap",
-            control_scale=True
-        )
-
-        st_folium(
-            context_map,
-            height=470,
-            use_container_width=True,
-            returned_objects=[],
-            key="bloom_geographic_context"
-        )
+        ctx.geojson,
+        ctx.area_id,
+        ndvi_df=ctx.ndvi_df if not ctx.is_demo else None,
+        rainfall_df=ctx.rainfall_df if not ctx.is_demo else None,
+        metadata=ctx.metadata if not ctx.is_demo else {},
+    )
+          
 
     section_title(
         "THE PROFILE",
